@@ -1,0 +1,4 @@
+{
+  "runtime": "python_web",
+  "startCommand": "gunicorn -b 0.0.0.0:$PORT panel:app"
+}
