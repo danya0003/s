@@ -11,6 +11,7 @@ ONLINE_SEC = 90
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 # Ограничение 10 МБ на файл!
 
 def db():
     if "_db" not in g:
@@ -105,9 +106,17 @@ def upload():
     if 'file' not in request.files: return {"error": "no file"}, 400
     f = request.files['file']
     if f.filename == '': return {"error": "no filename"}, 400
+    
     filename = f"{uuid.uuid4().hex}_{os.path.basename(f.filename)}"
     filepath = os.path.join(UPLOAD_DIR, filename)
-    f.save(filepath)
+    
+    with open(filepath, "wb") as out:
+        while True:
+            chunk = f.stream.read(65536)
+            if not chunk:
+                break
+            out.write(chunk)
+            
     return {"url": f"/files/{filename}"}
 
 @app.get("/files/<filename>")
